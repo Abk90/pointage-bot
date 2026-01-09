@@ -239,7 +239,7 @@ class ZKBioTimeClient:
         end_date: datetime,
         employee_ids: List[str] = None,
     ) -> List[Pointage]:
-        """Récupère les pointages via API"""
+        """Récupère les pointages via API avec pagination"""
         pointages = []
 
         try:
@@ -250,19 +250,48 @@ class ZKBioTimeClient:
                 '/att/api/attRecord/',
             ]
 
-            params = {
-                'start_time': start_date.strftime('%Y-%m-%d %H:%M:%S'),
-                'end_time': end_date.strftime('%Y-%m-%d %H:%M:%S'),
-            }
-
             for endpoint in endpoints:
                 try:
                     url = f"{self.biotime_url.rstrip('/')}{endpoint}"
-                    response = self.session.get(url, params=params, timeout=60)
+                    page = 1
+                    page_size = 100  # Récupère 100 résultats par page
+                    all_records = []
 
-                    if response.status_code == 200:
+                    while True:
+                        params = {
+                            'start_time': start_date.strftime('%Y-%m-%d %H:%M:%S'),
+                            'end_time': end_date.strftime('%Y-%m-%d %H:%M:%S'),
+                            'page': page,
+                            'page_size': page_size,
+                        }
+
+                        response = self.session.get(url, params=params, timeout=60)
+
+                        if response.status_code != 200:
+                            break
+
                         data = response.json()
-                        records = data if isinstance(data, list) else data.get('data', data.get('results', []))
+
+                        # Gère différents formats de réponse
+                        if isinstance(data, list):
+                            records = data
+                        else:
+                            records = data.get('data', data.get('results', []))
+
+                        if not records:
+                            break
+
+                        all_records.extend(records)
+
+                        # Vérifie s'il y a plus de pages
+                        total = data.get('count', 0) if isinstance(data, dict) else len(records)
+                        if len(all_records) >= total or len(records) < page_size:
+                            break
+
+                        page += 1
+
+                    if all_records:
+                        records = all_records
 
                         for record in records:
                             emp_id = str(record.get('emp_code') or record.get('employee_id') or record.get('pin'))
