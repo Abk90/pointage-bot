@@ -254,6 +254,37 @@ class OdooClient:
         """Vérifie si une présence existe déjà pour éviter les doublons (legacy)"""
         return self.check_checkin_exists(employee_id, check_in, tolerance_minutes)
 
+    def get_attendance_for_day(self, employee_id: int, date: str) -> Optional[Dict]:
+        """Récupère la présence d'un employé pour une date donnée"""
+        try:
+            from datetime import datetime
+
+            if isinstance(date, str):
+                if ' ' in date:
+                    date = date.split(' ')[0]
+                day_start = f"{date} 00:00:00"
+                day_end = f"{date} 23:59:59"
+            else:
+                day_start = date.strftime('%Y-%m-%d 00:00:00')
+                day_end = date.strftime('%Y-%m-%d 23:59:59')
+
+            attendances = self.search_read(
+                'hr.attendance',
+                [
+                    ('employee_id', '=', employee_id),
+                    ('check_in', '>=', day_start),
+                    ('check_in', '<=', day_end),
+                ],
+                fields=['id', 'employee_id', 'check_in', 'check_out'],
+                limit=1,
+                order='check_in desc'
+            )
+            return attendances[0] if attendances else None
+
+        except Exception as e:
+            print(f"  ⚠️ Erreur récupération présence du jour: {e}")
+            return None
+
     def build_employee_badge_mapping(self) -> Dict[str, int]:
         """Construit un mapping badge -> employee_id"""
         employees = self.get_employees()

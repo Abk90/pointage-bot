@@ -229,14 +229,38 @@ class PointageBot(BaseBot):
         """
         Traite un pointage individuel.
 
-        Logique simplifiée :
+        Logique :
+        - Si le pointage tombe dans une présence existante → ignorer
         - Si présence ouverte → le pointage est une SORTIE
         - Si pas de présence ouverte → le pointage est une ENTRÉE
         """
         try:
             timestamp_str = pointage.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            pointage_date = pointage.timestamp.strftime('%Y-%m-%d')
 
-            # IMPORTANT: Vérifie d'abord s'il y a une présence ouverte
+            # Vérifie si le pointage tombe dans une présence existante complète
+            existing_attendance = self.odoo_client.get_attendance_for_day(odoo_emp_id, pointage_date)
+            if existing_attendance and existing_attendance.get('check_out'):
+                # Vérifie si le pointage est DANS la période de cette présence
+                try:
+                    existing_checkin = datetime.strptime(existing_attendance['check_in'], '%Y-%m-%d %H:%M:%S')
+                    existing_checkout = datetime.strptime(existing_attendance['check_out'], '%Y-%m-%d %H:%M:%S')
+
+                    if existing_checkin <= pointage.timestamp <= existing_checkout:
+                        # Le pointage tombe dans une présence déjà enregistrée → ignorer
+                        self.stats.skipped_duplicates += 1
+                        return SyncResult(
+                            pointage=pointage,
+                            employee_id_zk=pointage.employee_id,
+                            employee_id_odoo=odoo_emp_id,
+                            employee_name=pointage.employee_name,
+                            action='skipped',
+                            error=f'Pointage déjà couvert ({existing_checkin.strftime("%H:%M")}-{existing_checkout.strftime("%H:%M")})',
+                        )
+                except:
+                    pass  # En cas d'erreur de parsing, continue le traitement normal
+
+            # IMPORTANT: Vérifie s'il y a une présence ouverte
             # Cela détermine si c'est une entrée ou une sortie
             open_attendance = self.odoo_client.get_open_attendance(odoo_emp_id)
 
