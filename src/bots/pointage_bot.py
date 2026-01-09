@@ -235,18 +235,21 @@ class PointageBot(BaseBot):
         - Si pas de présence ouverte → le pointage est une ENTRÉE
         """
         try:
-            timestamp_str = pointage.timestamp.strftime('%Y-%m-%d %H:%M:%S')
-            pointage_date = pointage.timestamp.strftime('%Y-%m-%d')
+            # Ajustement timezone: ZK BioTime renvoie heure locale (UTC+1)
+            # Odoo attend UTC, donc on soustrait 1 heure
+            timestamp_utc = pointage.timestamp - timedelta(hours=1)
+            timestamp_str = timestamp_utc.strftime('%Y-%m-%d %H:%M:%S')
+            pointage_date = timestamp_utc.strftime('%Y-%m-%d')
 
             # Vérifie si le pointage tombe dans une présence existante complète
             existing_attendance = self.odoo_client.get_attendance_for_day(odoo_emp_id, pointage_date)
             if existing_attendance and existing_attendance.get('check_out'):
-                # Vérifie si le pointage est DANS la période de cette présence
+                # Vérifie si le pointage (UTC) est DANS la période de cette présence (UTC)
                 try:
                     existing_checkin = datetime.strptime(existing_attendance['check_in'], '%Y-%m-%d %H:%M:%S')
                     existing_checkout = datetime.strptime(existing_attendance['check_out'], '%Y-%m-%d %H:%M:%S')
 
-                    if existing_checkin <= pointage.timestamp <= existing_checkout:
+                    if existing_checkin <= timestamp_utc <= existing_checkout:
                         # Le pointage tombe dans une présence déjà enregistrée → ignorer
                         self.stats.skipped_duplicates += 1
                         return SyncResult(
@@ -266,14 +269,14 @@ class PointageBot(BaseBot):
 
             if open_attendance:
                 # Il y a une présence ouverte → c'est une SORTIE
-                # Vérifie que le checkout est après le checkin
+                # Vérifie que le checkout (UTC) est après le checkin (UTC)
                 open_checkin_str = open_attendance.get('check_in', '')
                 try:
                     open_checkin = datetime.strptime(open_checkin_str, '%Y-%m-%d %H:%M:%S')
                 except:
                     open_checkin = datetime.min
 
-                if pointage.timestamp <= open_checkin:
+                if timestamp_utc <= open_checkin:
                     # Le pointage est AVANT ou ÉGAL au check-in → ignorer
                     self.stats.skipped_no_match += 1
                     return SyncResult(
@@ -305,7 +308,7 @@ class PointageBot(BaseBot):
 
                 if success:
                     self.stats.checkouts_updated += 1
-                    print(f"    ✅ Sortie: {pointage.employee_name} à {timestamp_str}")
+                    print(f"    ✅ Sortie: {pointage.employee_name} à {pointage.timestamp.strftime('%H:%M:%S')}")
                     return SyncResult(
                         pointage=pointage,
                         employee_id_zk=pointage.employee_id,
@@ -346,7 +349,7 @@ class PointageBot(BaseBot):
 
                 if attendance_id:
                     self.stats.checkins_created += 1
-                    print(f"    ✅ Entrée: {pointage.employee_name} à {timestamp_str}")
+                    print(f"    ✅ Entrée: {pointage.employee_name} à {pointage.timestamp.strftime('%H:%M:%S')}")
                     return SyncResult(
                         pointage=pointage,
                         employee_id_zk=pointage.employee_id,
