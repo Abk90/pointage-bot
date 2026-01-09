@@ -236,19 +236,8 @@ class PointageBot(BaseBot):
         try:
             timestamp_str = pointage.timestamp.strftime('%Y-%m-%d %H:%M:%S')
 
-            # Vérifie si ce pointage existe déjà (doublon)
-            if self.odoo_client.check_attendance_exists(odoo_emp_id, timestamp_str, tolerance_minutes=2):
-                self.stats.skipped_duplicates += 1
-                return SyncResult(
-                    pointage=pointage,
-                    employee_id_zk=pointage.employee_id,
-                    employee_id_odoo=odoo_emp_id,
-                    employee_name=pointage.employee_name,
-                    action='skipped',
-                    error='Doublon détecté',
-                )
-
-            # Vérifie s'il y a une présence ouverte
+            # IMPORTANT: Vérifie d'abord s'il y a une présence ouverte
+            # Cela détermine si c'est une entrée ou une sortie
             open_attendance = self.odoo_client.get_open_attendance(odoo_emp_id)
 
             if open_attendance:
@@ -270,6 +259,18 @@ class PointageBot(BaseBot):
                         employee_name=pointage.employee_name,
                         action='skipped',
                         error=f'Pointage antérieur au check-in ({open_checkin_str})',
+                    )
+
+                # Vérifie si un check-out existe déjà à cette heure
+                if self.odoo_client.check_checkout_exists(odoo_emp_id, timestamp_str, tolerance_minutes=2):
+                    self.stats.skipped_duplicates += 1
+                    return SyncResult(
+                        pointage=pointage,
+                        employee_id_zk=pointage.employee_id,
+                        employee_id_odoo=odoo_emp_id,
+                        employee_name=pointage.employee_name,
+                        action='skipped',
+                        error='Doublon check-out détecté',
                     )
 
                 # Ferme la présence avec l'heure du pointage
@@ -302,6 +303,18 @@ class PointageBot(BaseBot):
 
             else:
                 # Pas de présence ouverte → c'est une ENTRÉE
+                # Vérifie si un check-in existe déjà à cette heure
+                if self.odoo_client.check_checkin_exists(odoo_emp_id, timestamp_str, tolerance_minutes=2):
+                    self.stats.skipped_duplicates += 1
+                    return SyncResult(
+                        pointage=pointage,
+                        employee_id_zk=pointage.employee_id,
+                        employee_id_odoo=odoo_emp_id,
+                        employee_name=pointage.employee_name,
+                        action='skipped',
+                        error='Doublon check-in détecté',
+                    )
+
                 attendance_id = self.odoo_client.create_attendance_checkin(
                     employee_id=odoo_emp_id,
                     check_in=timestamp_str,

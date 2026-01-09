@@ -184,21 +184,21 @@ class OdooClient:
             print(f"  ⚠️ Erreur mise à jour check-out: {e}")
             return False
 
-    def check_attendance_exists(self, employee_id: int, check_in: str, tolerance_minutes: int = 5) -> bool:
-        """Vérifie si une présence existe déjà pour éviter les doublons"""
+    def check_checkin_exists(self, employee_id: int, timestamp: str, tolerance_minutes: int = 5) -> bool:
+        """Vérifie si un check-in existe déjà à cette heure"""
         try:
             from datetime import datetime, timedelta
 
-            if isinstance(check_in, str):
-                if 'T' in check_in:
-                    check_in_dt = datetime.fromisoformat(check_in.replace('Z', '+00:00').split('+')[0])
+            if isinstance(timestamp, str):
+                if 'T' in timestamp:
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00').split('+')[0])
                 else:
-                    check_in_dt = datetime.strptime(check_in, '%Y-%m-%d %H:%M:%S')
+                    dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
             else:
-                check_in_dt = check_in
+                dt = timestamp
 
-            start = (check_in_dt - timedelta(minutes=tolerance_minutes)).strftime('%Y-%m-%d %H:%M:%S')
-            end = (check_in_dt + timedelta(minutes=tolerance_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+            start = (dt - timedelta(minutes=tolerance_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+            end = (dt + timedelta(minutes=tolerance_minutes)).strftime('%Y-%m-%d %H:%M:%S')
 
             attendances = self.search_read(
                 'hr.attendance',
@@ -214,8 +214,45 @@ class OdooClient:
             return len(attendances) > 0
 
         except Exception as e:
-            print(f"  ⚠️ Erreur vérification doublon: {e}")
+            print(f"  ⚠️ Erreur vérification doublon check-in: {e}")
             return False
+
+    def check_checkout_exists(self, employee_id: int, timestamp: str, tolerance_minutes: int = 5) -> bool:
+        """Vérifie si un check-out existe déjà à cette heure"""
+        try:
+            from datetime import datetime, timedelta
+
+            if isinstance(timestamp, str):
+                if 'T' in timestamp:
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00').split('+')[0])
+                else:
+                    dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+            else:
+                dt = timestamp
+
+            start = (dt - timedelta(minutes=tolerance_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+            end = (dt + timedelta(minutes=tolerance_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+
+            attendances = self.search_read(
+                'hr.attendance',
+                [
+                    ('employee_id', '=', employee_id),
+                    ('check_out', '>=', start),
+                    ('check_out', '<=', end),
+                ],
+                fields=['id'],
+                limit=1
+            )
+
+            return len(attendances) > 0
+
+        except Exception as e:
+            print(f"  ⚠️ Erreur vérification doublon check-out: {e}")
+            return False
+
+    def check_attendance_exists(self, employee_id: int, check_in: str, tolerance_minutes: int = 5) -> bool:
+        """Vérifie si une présence existe déjà pour éviter les doublons (legacy)"""
+        return self.check_checkin_exists(employee_id, check_in, tolerance_minutes)
 
     def build_employee_badge_mapping(self) -> Dict[str, int]:
         """Construit un mapping badge -> employee_id"""
