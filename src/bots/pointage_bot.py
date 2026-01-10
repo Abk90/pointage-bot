@@ -289,9 +289,41 @@ class PointageBot(BaseBot):
                         error='Ce pointage est déjà le check-in',
                     )
 
+                # Vérifie si la présence ouverte est d'un jour DIFFÉRENT (présence orpheline)
+                open_checkin_date = open_checkin.date()
+                pointage_date_obj = timestamp_utc.date()
+
+                if open_checkin_date != pointage_date_obj:
+                    # Présence orpheline d'un autre jour - la fermer proprement
+                    print(f"    ⚠️ Présence orpheline détectée: {pointage.employee_name} ({open_checkin_str})")
+
+                    # Cherche s'il y a une présence après celle-ci
+                    next_attendance = self.odoo_client.get_next_attendance(odoo_emp_id, open_checkin_str)
+
+                    if next_attendance:
+                        # Ferme juste avant la présence suivante
+                        next_checkin = datetime.strptime(next_attendance['check_in'], '%Y-%m-%d %H:%M:%S')
+                        checkout_time = (next_checkin - timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        # Ferme avec +8h après le check-in (journée de travail standard)
+                        checkout_time = (open_checkin + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S')
+
+                    success = self.odoo_client.update_attendance_checkout(
+                        attendance_id=open_attendance['id'],
+                        check_out=checkout_time,
+                    )
+
+                    if success:
+                        print(f"    ✅ Présence orpheline fermée: {open_checkin_str} → {checkout_time}")
+                    else:
+                        print(f"    ❌ Impossible de fermer la présence orpheline")
+
+                    # Maintenant traiter ce pointage comme une nouvelle ENTRÉE
+                    open_attendance = None
+
                 # Vérifie que le checkout est bien APRÈS le checkin
                 # Compare en UTC (les deux sont en UTC)
-                if timestamp_utc < open_checkin:
+                if open_attendance and timestamp_utc < open_checkin:
                     # Le pointage est clairement AVANT le check-in → ignorer
                     self.stats.skipped_no_match += 1
                     return SyncResult(
@@ -303,47 +335,50 @@ class PointageBot(BaseBot):
                         error=f'Pointage antérieur au check-in ({open_checkin_str})',
                     )
 
-                # Vérifie si un check-out existe déjà à cette heure
-                if self.odoo_client.check_checkout_exists(odoo_emp_id, timestamp_str, tolerance_minutes=2):
-                    self.stats.skipped_duplicates += 1
-                    return SyncResult(
-                        pointage=pointage,
-                        employee_id_zk=pointage.employee_id,
-                        employee_id_odoo=odoo_emp_id,
-                        employee_name=pointage.employee_name,
-                        action='skipped',
-                        error='Doublon check-out détecté',
-                    )
+                # Si on a toujours une présence ouverte (pas orpheline), traiter comme SORTIE
+                if open_attendance:
+                    # Vérifie si un check-out existe déjà à cette heure
+                    if self.odoo_client.check_checkout_exists(odoo_emp_id, timestamp_str, tolerance_minutes=2):
+                        self.stats.skipped_duplicates += 1
+                        return SyncResult(
+                            pointage=pointage,
+                            employee_id_zk=pointage.employee_id,
+                            employee_id_odoo=odoo_emp_id,
+                            employee_name=pointage.employee_name,
+                            action='skipped',
+                            error='Doublon check-out détecté',
+                        )
 
-                # Ferme la présence avec l'heure du pointage
-                success = self.odoo_client.update_attendance_checkout(
-                    attendance_id=open_attendance['id'],
-                    check_out=timestamp_str,
-                )
-
-                if success:
-                    self.stats.checkouts_updated += 1
-                    print(f"    ✅ Sortie: {pointage.employee_name} à {pointage.timestamp.strftime('%H:%M:%S')}")
-                    return SyncResult(
-                        pointage=pointage,
-                        employee_id_zk=pointage.employee_id,
-                        employee_id_odoo=odoo_emp_id,
-                        employee_name=pointage.employee_name,
-                        action='checkout',
+                    # Ferme la présence avec l'heure du pointage
+                    success = self.odoo_client.update_attendance_checkout(
                         attendance_id=open_attendance['id'],
-                    )
-                else:
-                    self.stats.errors += 1
-                    return SyncResult(
-                        pointage=pointage,
-                        employee_id_zk=pointage.employee_id,
-                        employee_id_odoo=odoo_emp_id,
-                        employee_name=pointage.employee_name,
-                        action='error',
-                        error='Erreur mise à jour check-out',
+                        check_out=timestamp_str,
                     )
 
-            else:
+                    if success:
+                        self.stats.checkouts_updated += 1
+                        print(f"    ✅ Sortie: {pointage.employee_name} à {pointage.timestamp.strftime('%H:%M:%S')}")
+                        return SyncResult(
+                            pointage=pointage,
+                            employee_id_zk=pointage.employee_id,
+                            employee_id_odoo=odoo_emp_id,
+                            employee_name=pointage.employee_name,
+                            action='checkout',
+                            attendance_id=open_attendance['id'],
+                        )
+                    else:
+                        self.stats.errors += 1
+                        return SyncResult(
+                            pointage=pointage,
+                            employee_id_zk=pointage.employee_id,
+                            employee_id_odoo=odoo_emp_id,
+                            employee_name=pointage.employee_name,
+                            action='error',
+                            error='Erreur mise à jour check-out',
+                        )
+
+            # Pas de présence ouverte (ou présence orpheline fermée) → c'est une ENTRÉE
+            if not open_attendance:
                 # Pas de présence ouverte → c'est une ENTRÉE
                 # Vérifie si un check-in existe déjà à cette heure
                 if self.odoo_client.check_checkin_exists(odoo_emp_id, timestamp_str, tolerance_minutes=2):

@@ -300,6 +300,25 @@ class OdooClient:
             print(f"  ⚠️ Erreur récupération présence du jour: {e}")
             return None
 
+    def get_next_attendance(self, employee_id: int, after_checkin: str) -> Optional[Dict]:
+        """Récupère la présence suivante d'un employé après un check-in donné"""
+        try:
+            attendances = self.search_read(
+                'hr.attendance',
+                [
+                    ('employee_id', '=', employee_id),
+                    ('check_in', '>', after_checkin),
+                ],
+                fields=['id', 'employee_id', 'check_in', 'check_out'],
+                limit=1,
+                order='check_in asc'
+            )
+            return attendances[0] if attendances else None
+
+        except Exception as e:
+            print(f"  ⚠️ Erreur récupération présence suivante: {e}")
+            return None
+
     def build_employee_badge_mapping(self) -> Dict[str, int]:
         """Construit un mapping badge -> employee_id"""
         employees = self.get_employees()
