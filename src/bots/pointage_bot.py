@@ -276,8 +276,8 @@ class PointageBot(BaseBot):
                     open_checkin = datetime.min
 
                 # Vérifie si c'est le même pointage que le check-in (re-traitement)
-                # Tolérance de 2h pour gérer les données avec/sans fix timezone
-                time_diff = abs((pointage.timestamp - open_checkin).total_seconds())
+                # Compare en UTC pour cohérence (les deux sont maintenant en UTC)
+                time_diff = abs((timestamp_utc - open_checkin).total_seconds())
                 if time_diff < 120:  # Moins de 2 minutes = même pointage
                     self.stats.skipped_duplicates += 1
                     return SyncResult(
@@ -289,9 +289,9 @@ class PointageBot(BaseBot):
                         error='Ce pointage est déjà le check-in',
                     )
 
-                # Vérifie que le checkout est bien APRÈS le checkin (avec marge pour timezone)
-                # On utilise l'heure locale pour la comparaison (compatible ancien/nouveau)
-                if pointage.timestamp < open_checkin - timedelta(hours=2):
+                # Vérifie que le checkout est bien APRÈS le checkin
+                # Compare en UTC (les deux sont en UTC)
+                if timestamp_utc < open_checkin:
                     # Le pointage est clairement AVANT le check-in → ignorer
                     self.stats.skipped_no_match += 1
                     return SyncResult(

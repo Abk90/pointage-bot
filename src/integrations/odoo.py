@@ -168,20 +168,35 @@ class OdooClient:
             return attendance_id
 
         except Exception as e:
-            print(f"  ⚠️ Erreur création check-in: {e}")
+            print(f"  ⚠️ Erreur création check-in (emp={employee_id}, time={check_in}): {e}")
             return None
 
     def update_attendance_checkout(self, attendance_id: int, check_out: str) -> bool:
         """Met à jour une présence avec l'heure de sortie"""
+        attendance_info = None
         try:
             if 'T' in str(check_out):
                 check_out = str(check_out).replace('T', ' ').split('+')[0].split('.')[0]
+
+            # Récupère les infos de la présence pour le debug
+            attendance_info = self.search_read(
+                'hr.attendance',
+                [('id', '=', attendance_id)],
+                fields=['id', 'employee_id', 'check_in', 'check_out'],
+                limit=1
+            )
 
             self.execute('hr.attendance', 'write', [attendance_id], {'check_out': check_out})
             return True
 
         except Exception as e:
-            print(f"  ⚠️ Erreur mise à jour check-out: {e}")
+            # Log détaillé avec les infos de la présence
+            att_info = ""
+            if attendance_info:
+                att = attendance_info[0]
+                emp_name = att['employee_id'][1] if att.get('employee_id') else 'N/A'
+                att_info = f" [présence #{attendance_id}: {emp_name}, check_in={att.get('check_in')}]"
+            print(f"  ⚠️ Erreur mise à jour check-out{att_info}: tentative check_out={check_out} → {e}")
             return False
 
     def check_checkin_exists(self, employee_id: int, timestamp: str, tolerance_minutes: int = 5) -> bool:
