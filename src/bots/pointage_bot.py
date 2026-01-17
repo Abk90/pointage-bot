@@ -154,9 +154,8 @@ class PointageBot(BaseBot):
         """Collecte les pointages depuis ZK BioTime."""
         print(f"  Récupération des pointages depuis ZK BioTime...")
 
-        # Par défaut, récupère les pointages d'aujourd'hui
-        if not start_date:
-            start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # Par défaut, utilise la date du dernier sync (géré par zk_client)
+        # Ne force plus minuit pour éviter de retraiter les mêmes pointages
 
         pointages = self.zk_client.get_attendances(
             start_date=start_date,
