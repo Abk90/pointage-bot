@@ -9,6 +9,7 @@ Usage:
     python run_pointage.py test         # Teste les connexions
     python run_pointage.py cleanup      # Ferme les présences ouvertes > 24h
     python run_pointage.py cleanup 48   # Ferme les présences ouvertes > 48h
+    python run_pointage.py fix          # Corrige les présences corrompues (check_in = check_out)
 """
 
 import sys
@@ -62,6 +63,96 @@ def cleanup_open_attendances(max_hours=24):
     print(f"\n  ✅ {closed} présences fermées, {skipped} récentes ignorées")
 
 
+def fix_corrupted_attendances(days_back=7):
+    """Corrige les présences corrompues où check_in = check_out."""
+    from datetime import datetime, timedelta
+    from src.integrations.odoo import OdooClient
+
+    print(f"Recherche des présences corrompues (check_in = check_out) des {days_back} derniers jours...")
+
+    odoo = OdooClient()
+    if not odoo.connect():
+        print("Erreur connexion Odoo")
+        return
+
+    start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d 00:00:00')
+
+    attendances = odoo.search_read(
+        'hr.attendance',
+        [('check_in', '>=', start_date)],
+        fields=['id', 'employee_id', 'check_in', 'check_out'],
+        order='check_in asc'
+    )
+
+    # Trouver les présences corrompues
+    corrupted = []
+    for att in attendances:
+        if att.get('check_in') and att.get('check_out') and att['check_in'] == att['check_out']:
+            corrupted.append(att)
+
+    print(f"  {len(corrupted)} présences corrompues trouvées sur {len(attendances)} total\n")
+
+    if not corrupted:
+        print("  ✅ Aucune présence corrompue à corriger")
+        return
+
+    fixed = 0
+    deleted = 0
+    errors = 0
+
+    # Grouper par employé pour détecter les doublons
+    by_employee = {}
+    for att in corrupted:
+        emp_id = att['employee_id'][0] if att.get('employee_id') else None
+        if emp_id:
+            if emp_id not in by_employee:
+                by_employee[emp_id] = []
+            by_employee[emp_id].append(att)
+
+    for emp_id, emp_attendances in by_employee.items():
+        emp_name = emp_attendances[0]['employee_id'][1] if emp_attendances[0].get('employee_id') else 'N/A'
+
+        if len(emp_attendances) == 1:
+            # Une seule présence corrompue → réouvrir (supprimer check_out)
+            att = emp_attendances[0]
+            try:
+                odoo.execute('hr.attendance', 'write', [att['id']], {'check_out': False})
+                print(f"  ✅ {emp_name}: ID {att['id']} réouverte ({att['check_in']})")
+                fixed += 1
+            except Exception as e:
+                print(f"  ❌ {emp_name}: ID {att['id']} erreur - {e}")
+                errors += 1
+        else:
+            # Plusieurs présences corrompues → garder la première, supprimer les autres
+            # Trier par check_in
+            sorted_atts = sorted(emp_attendances, key=lambda x: x['check_in'])
+
+            # Réouvrir la première
+            first = sorted_atts[0]
+            try:
+                odoo.execute('hr.attendance', 'write', [first['id']], {'check_out': False})
+                print(f"  ✅ {emp_name}: ID {first['id']} réouverte ({first['check_in']})")
+                fixed += 1
+            except Exception as e:
+                print(f"  ❌ {emp_name}: ID {first['id']} erreur - {e}")
+                errors += 1
+
+            # Supprimer les autres (doublons)
+            for att in sorted_atts[1:]:
+                try:
+                    odoo.execute('hr.attendance', 'unlink', [att['id']])
+                    print(f"  🗑️  {emp_name}: ID {att['id']} supprimée (doublon)")
+                    deleted += 1
+                except Exception as e:
+                    print(f"  ❌ {emp_name}: ID {att['id']} erreur suppression - {e}")
+                    errors += 1
+
+    print(f"\n  Résumé:")
+    print(f"    ✅ {fixed} présences réouvertes")
+    print(f"    🗑️  {deleted} doublons supprimés")
+    print(f"    ❌ {errors} erreurs")
+
+
 def main():
     if len(sys.argv) < 2:
         run_sync()
@@ -82,6 +173,10 @@ def main():
     elif cmd == 'cleanup':
         hours = int(sys.argv[2]) if len(sys.argv) > 2 else 24
         cleanup_open_attendances(hours)
+
+    elif cmd == 'fix':
+        days = int(sys.argv[2]) if len(sys.argv) > 2 else 7
+        fix_corrupted_attendances(days)
 
     elif cmd in ['help', '-h', '--help']:
         print(__doc__)
